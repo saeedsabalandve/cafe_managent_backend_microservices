@@ -59,3 +59,29 @@ export class InitialMenu001000000000001 implements MigrationInterface {
     // #foreign-keys
     await queryRunner.createForeignKey('menu_items', new TableForeignKey({
       columnNames: ['category_id'],
+      referencedTableName: 'categories',
+      referencedColumnNames: ['id'],
+      onDelete: 'CASCADE',
+    }));
+
+    await queryRunner.createForeignKey('modifiers', new TableForeignKey({
+      columnNames: ['menu_item_id'],
+      referencedTableName: 'menu_items',
+      referencedColumnNames: ['id'],
+      onDelete: 'CASCADE',
+    }));
+
+    // #gin-index-for-fulltext
+    await queryRunner.query(`CREATE INDEX idx_menu_items_name_gin ON menu_items USING gin(to_tsvector('english', name))`);
+    
+    // #composite-index-tenant
+    await queryRunner.query(`CREATE INDEX idx_menu_items_cafe_category ON menu_items(cafe_id, category_id)`);
+    await queryRunner.query(`CREATE INDEX idx_categories_cafe_parent ON categories(cafe_id, parent_id)`);
+  }
+
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.dropTable('modifiers');
+    await queryRunner.dropTable('menu_items');
+    await queryRunner.dropTable('categories');
+  }
+         }
