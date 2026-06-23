@@ -1,0 +1,293 @@
+# docker-compose.yml
+# Docker Compose development environment
+# Version: 3.8
+
+version: '3.8'
+
+services:
+  # ============================================
+  # API GATEWAY
+  # ============================================
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: cafe-api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - JWT_PUBLIC_KEY_PATH=/keys/jwt-public.pem
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - MENU_SERVICE_URL=http://menu-service:3002
+      - ORDER_SERVICE_URL=http://order-service:3003
+      - INVENTORY_SERVICE_URL=http://inventory-service:3004
+      - ANALYTICS_SERVICE_URL=http://analytics-service:3005
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./services/api-gateway/src:/app/src
+      - ./keys:/keys:ro
+    depends_on:
+      redis:
+        condition: service_started
+      auth-service:
+        condition: service_started
+    networks:
+      - cafe-network
+    restart: unless-stopped
+
+  # ============================================
+  # AUTH SERVICE
+  # ============================================
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: cafe-auth-service
+    ports:
+      - "3001:3001"
+    environment:
+      - AUTH_MONGODB_URI=mongodb://mongo-auth:27017/auth_db
+      - AUTH_JWT_PRIVATE_KEY_PATH=/keys/jwt-private.pem
+      - AUTH_JWT_PUBLIC_KEY_PATH=/keys/jwt-public.pem
+      - AUTH_ACCESS_TOKEN_EXPIRY=900
+      - AUTH_REFRESH_TOKEN_EXPIRY=604800
+    volumes:
+      - ./services/auth-service/app:/app
+      - ./keys:/keys:ro
+    depends_on:
+      mongo-auth:
+        condition: service_healthy
+    networks:
+      - cafe-network
+    restart: unless-stopped
+
+  # ============================================
+  # MENU SERVICE
+  # ============================================
+  menu-service:
+    build:
+      context: ./services/menu-service
+      dockerfile: Dockerfile
+    container_name: cafe-menu-service
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - DB_HOST=postgres-menu
+      - DB_PORT=5432
+      - DB_NAME=menu_db
+      - DB_USER=cafe_admin
+      - DB_PASSWORD=dev_password_2020
+      - DB_POOL_MIN=2
+      - DB_POOL_MAX=10
+    volumes:
+      - ./services/menu-service/src:/app/src
+    depends_on:
+      postgres-menu:
+        condition: service_healthy
+    networks:
+      - cafe-network
+    restart: unless-stopped
+
+  # ============================================
+  # ORDER SERVICE
+  # ============================================
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+    container_name: cafe-order-service
+    ports:
+      - "3003:3003"
+    environment:
+      - GIN_MODE=debug
+      - PORT=3003
+      - MONGO_URI=mongodb://mongo-order:27017/order_db
+      - REDIS_URL=redis:6379
+      - WS_PING_INTERVAL=30
+    volumes:
+      - ./services/order-service:/app
+    depends_on:
+      mongo-order:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - cafe-network
+    restart: unless-stopped
+
+  # ============================================
+  # INVENTORY SERVICE
+  # ============================================
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+      dockerfile: Dockerfile
+    container_name: cafe-inventory-service
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=development
+      - PORT=3004
+      - DB_HOST=postgres-inventory
+      - DB_PORT=5432
+      - DB_NAME=inventory_db
+      - DB_USER=cafe_admin
+      - DB_PASSWORD=dev_password_2020
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./services/inventory-service/src:/app/src
+    depends_on:
+      postgres-inventory:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - cafe-network
+    restart: unless-stopped
+
+  # ============================================
+  # ANALYTICS SERVICE
+  # ============================================
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: cafe-analytics-service
+    ports:
+      - "3005:3005"
+    environment:
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_DB=analytics
+      - CLICKHOUSE_USER=default
+      - ETL_SCHEDULE_CRON="0 2 * * *"
+    volumes:
+      - ./services/analytics-service/app:/app
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - cafe-network
+    restart: unless-stopped
+
+  # ============================================
+  # DATABASES
+  # ============================================
+  postgres-menu:
+    image: postgres:12-alpine
+    container_name: cafe-postgres-menu
+    environment:
+      - POSTGRES_DB=menu_db
+      - POSTGRES_USER=cafe_admin
+      - POSTGRES_PASSWORD=dev_password_2020
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_menu_data:/var/lib/postgresql/data
+      - ./infrastructure/init-scripts/menu-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cafe_admin -d menu_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cafe-network
+
+  postgres-inventory:
+    image: postgres:12-alpine
+    container_name: cafe-postgres-inventory
+    environment:
+      - POSTGRES_DB=inventory_db
+      - POSTGRES_USER=cafe_admin
+      - POSTGRES_PASSWORD=dev_password_2020
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_inventory_data:/var/lib/postgresql/data
+      - ./infrastructure/init-scripts/inventory-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cafe_admin -d inventory_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cafe-network
+
+  mongo-auth:
+    image: mongo:4.2
+    container_name: cafe-mongo-auth
+    environment:
+      - MONGO_INITDB_DATABASE=auth_db
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_auth_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/auth_db --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cafe-network
+
+  mongo-order:
+    image: mongo:4.2
+    container_name: cafe-mongo-order
+    environment:
+      - MONGO_INITDB_DATABASE=order_db
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_order_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/order_db --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cafe-network
+
+  redis:
+    image: redis:6-alpine
+    container_name: cafe-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - cafe-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:20.3
+    container_name: cafe-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infrastructure/init-scripts/clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cafe-network
+
+volumes:
+  pg_menu_data:
+  pg_inventory_data:
+  mongo_auth_data:
+  mongo_order_data:
+  redis_data:
+  clickhouse_data:
+
+networks:
+  cafe-network:
+    driver: bridge
+    name: cafe-network
