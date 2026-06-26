@@ -1,0 +1,93 @@
+# infrastructure/k8s/base/ingress.yaml
+# #kubernetes #ingress #alb #routing
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cafe-management-ingress
+  namespace: cafe-management
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789:certificate/xxx
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+    # Rate limiting
+    alb.ingress.kubernetes.io/actions.rate-limit: >
+      {"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"429","messageBody":"Too Many Requests"}}
+    # WebSocket support
+    alb.ingress.kubernetes.io/conditions.orders-ws: >
+      [{"field":"http-header","httpHeaderConfig":{"httpHeaderName":"Upgrade","values":["websocket"]}}]
+spec:
+  rules:
+  - host: api.cafe-management.com
+    http:
+      paths:
+      # Auth Service
+      - path: /api/auth/*
+        pathType: Prefix
+        backend:
+          service:
+            name: auth-service
+            port:
+              number: 3001
+      
+      # Menu Service
+      - path: /api/menu/*
+        pathType: Prefix
+        backend:
+          service:
+            name: menu-service
+            port:
+              number: 3002
+      
+      # Order Service (WebSocket)
+      - path: /api/orders/kitchen/ws
+        pathType: Exact
+        backend:
+          service:
+            name: order-service
+            port:
+              number: 3003
+      
+      # Order Service (REST)
+      - path: /api/orders/*
+        pathType: Prefix
+        backend:
+          service:
+            name: order-service
+            port:
+              number: 3003
+      
+      # Inventory Service
+      - path: /api/inventory/*
+        pathType: Prefix
+        backend:
+          service:
+            name: inventory-service
+            port:
+              number: 3004
+      
+      # Analytics Service
+      - path: /api/analytics/*
+        pathType: Prefix
+        backend:
+          service:
+            name: analytics-service
+            port:
+              number: 3005
+      
+      # Default (API Gateway)
+      - path: /*
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 3000
