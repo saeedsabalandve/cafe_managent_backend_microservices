@@ -1,0 +1,95 @@
+# infrastructure/k8s/base/order-service-deployment.yaml
+# #kubernetes #deployment #order-service #websocket
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: cafe-management
+  labels:
+    app: order-service
+    tier: backend
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+        tier: backend
+    spec:
+      serviceAccountName: order-service-sa
+      containers:
+      - name: order-service
+        image: 123456789.dkr.ecr.us-east-1.amazonaws.com/cafe-order-service:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3003
+          name: http
+          protocol: TCP
+        env:
+        - name: GIN_MODE
+          value: "release"
+        - name: PORT
+          value: "3003"
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secrets
+              key: mongo-uri
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: WS_PING_INTERVAL
+          value: "30"
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: cafe-management
+  labels:
+    app: order-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3003
+    targetPort: 3003
+    protocol: TCP
+    name: http
+  selector:
+    app: order-service
+  # Session affinity for WebSocket
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
