@@ -1,0 +1,98 @@
+// shared/protos/menu.proto
+// #grpc-menu-operations #price-check #availability
+
+syntax = "proto3";
+
+package cafe.menu;
+
+option go_package = "menu-service/proto/menu";
+
+// ============================================
+// Menu Service
+// ============================================
+service MenuService {
+  // Get item price with modifiers
+  rpc GetItemPrice(GetItemPriceRequest) returns (ItemPriceResponse);
+  
+  // Check if item is available
+  rpc CheckAvailability(CheckAvailabilityRequest) returns (AvailabilityResponse);
+  
+  // Get item details
+  rpc GetItem(GetItemRequest) returns (MenuItemResponse);
+  
+  // Bulk check availability
+  rpc BulkCheckAvailability(BulkAvailabilityRequest) returns (stream AvailabilityResponse);
+}
+
+// ============================================
+// Messages
+// ============================================
+message GetItemPriceRequest {
+  string item_id = 1;
+  string cafe_id = 2;
+  string selected_variant = 3;
+  repeated string selected_modifiers = 4;
+}
+
+message ItemPriceResponse {
+  string item_id = 1;
+  string item_name = 2;
+  double base_price = 3;
+  double final_price = 4;
+  repeated PriceComponent components = 5;
+}
+
+message PriceComponent {
+  string type = 1;  // "base", "variant", "modifier"
+  string name = 2;
+  double amount = 3;
+}
+
+message CheckAvailabilityRequest {
+  string item_id = 1;
+  string cafe_id = 2;
+}
+
+message AvailabilityResponse {
+  string item_id = 1;
+  bool is_available = 2;
+  string reason = 3;  // empty if available
+  int32 preparation_time_minutes = 4;
+}
+
+message GetItemRequest {
+  string item_id = 1;
+  string cafe_id = 2;
+}
+
+message MenuItemResponse {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  double base_price = 4;
+  string category_id = 5;
+  string category_name = 6;
+  repeated Variant variants = 7;
+  repeated ModifierOption modifiers = 8;
+  string image_url = 9;
+  int32 preparation_time_minutes = 10;
+  bool is_available = 11;
+}
+
+message Variant {
+  string name = 1;
+  double price_delta = 2;
+  bool is_default = 3;
+}
+
+message ModifierOption {
+  string id = 1;
+  string name = 2;
+  double price_delta = 3;
+  bool is_available = 4;
+}
+
+message BulkAvailabilityRequest {
+  string cafe_id = 1;
+  repeated string item_ids = 2;
+}
