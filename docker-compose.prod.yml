@@ -1,0 +1,396 @@
+# docker-compose.prod.yml
+# Production Docker Compose configuration
+# Higher replica counts, resource limits, external volumes
+
+version: '3.8'
+
+services:
+  # ============================================
+  # API GATEWAY - Production
+  # ============================================
+  api-gateway:
+    image: ${ECR_REGISTRY}/cafe-api-gateway:${IMAGE_TAG:-latest}
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_PUBLIC_KEY_PATH=/run/secrets/jwt-public-key
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - MENU_SERVICE_URL=http://menu-service:3002
+      - ORDER_SERVICE_URL=http://order-service:3003
+      - INVENTORY_SERVICE_URL=http://inventory-service:3004
+      - ANALYTICS_SERVICE_URL=http://analytics-service:3005
+      - REDIS_URL=redis://redis:6379
+      - RATE_LIMIT_WINDOW_MS=900000
+      - RATE_LIMIT_MAX_REQUESTS=100
+    secrets:
+      - jwt-public-key
+    networks:
+      - cafe-network
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: cafe-api-gateway
+        awslogs-region: us-east-1
+        awslogs-stream-prefix: production
+
+  # ============================================
+  # AUTH SERVICE - Production
+  # ============================================
+  auth-service:
+    image: ${ECR_REGISTRY}/cafe-auth-service:${IMAGE_TAG:-latest}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    ports:
+      - "3001:3001"
+    environment:
+      - AUTH_MONGODB_URI=mongodb://${MONGO_AUTH_USER}:${MONGO_AUTH_PASS}@mongo-auth:27017/auth_db
+      - AUTH_JWT_PRIVATE_KEY_PATH=/run/secrets/jwt-private-key
+      - AUTH_JWT_PUBLIC_KEY_PATH=/run/secrets/jwt-public-key
+      - AUTH_ACCESS_TOKEN_EXPIRY=900
+      - AUTH_REFRESH_TOKEN_EXPIRY=604800
+      - AUTH_BCRYPT_ROUNDS=12
+    secrets:
+      - jwt-private-key
+      - jwt-public-key
+    depends_on:
+      - mongo-auth
+    networks:
+      - cafe-network
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: cafe-auth-service
+        awslogs-region: us-east-1
+
+  # ============================================
+  # MENU SERVICE - Production
+  # ============================================
+  menu-service:
+    image: ${ECR_REGISTRY}/cafe-menu-service:${IMAGE_TAG:-latest}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - DB_HOST=postgres-menu
+      - DB_PORT=5432
+      - DB_NAME=menu_db
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_POOL_MIN=5
+      - DB_POOL_MAX=20
+      - DB_IDLE_TIMEOUT=30000
+      - AWS_REGION=us-east-1
+      - S3_BUCKET_MENU_IMAGES=${S3_BUCKET}
+    depends_on:
+      - postgres-menu
+    networks:
+      - cafe-network
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: cafe-menu-service
+        awslogs-region: us-east-1
+
+  # ============================================
+  # ORDER SERVICE - Production
+  # ============================================
+  order-service:
+    image: ${ECR_REGISTRY}/cafe-order-service:${IMAGE_TAG:-latest}
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    ports:
+      - "3003:3003"
+    environment:
+      - GIN_MODE=release
+      - PORT=3003
+      - MONGO_URI=mongodb://${MONGO_ORDER_USER}:${MONGO_ORDER_PASS}@mongo-order:27017/order_db
+      - REDIS_URL=redis:6379
+      - WS_PING_INTERVAL=30
+    depends_on:
+      - mongo-order
+      - redis
+    networks:
+      - cafe-network
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: cafe-order-service
+        awslogs-region: us-east-1
+
+  # ============================================
+  # INVENTORY SERVICE - Production
+  # ============================================
+  inventory-service:
+    image: ${ECR_REGISTRY}/cafe-inventory-service:${IMAGE_TAG:-latest}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      - DB_HOST=postgres-inventory
+      - DB_PORT=5432
+      - DB_NAME=inventory_db
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres-inventory
+      - redis
+    networks:
+      - cafe-network
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: cafe-inventory-service
+        awslogs-region: us-east-1
+
+  # ============================================
+  # ANALYTICS SERVICE - Production
+  # ============================================
+  analytics-service:
+    image: ${ECR_REGISTRY}/cafe-analytics-service:${IMAGE_TAG:-latest}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    ports:
+      - "3005:3005"
+    environment:
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_DB=analytics
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - ETL_SCHEDULE_CRON="0 2 * * *"
+      - MONGO_ORDER_URI=mongodb://${MONGO_ORDER_USER}:${MONGO_ORDER_PASS}@mongo-order:27017/order_db
+    depends_on:
+      - clickhouse
+    networks:
+      - cafe-network
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: cafe-analytics-service
+        awslogs-region: us-east-1
+
+  # ============================================
+  # DATABASES - Production
+  # ============================================
+  postgres-menu:
+    image: postgres:12-alpine
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+    environment:
+      - POSTGRES_DB=menu_db
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - pg_menu_data:/var/lib/postgresql/data
+      - ./infrastructure/init-scripts/menu-init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - cafe-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d menu_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-inventory:
+    image: postgres:12-alpine
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+    environment:
+      - POSTGRES_DB=inventory_db
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - pg_inventory_data:/var/lib/postgresql/data
+      - ./infrastructure/init-scripts/inventory-init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"
+    networks:
+      - cafe-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d inventory_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo-auth:
+    image: mongo:4.2
+    deploy:
+      replicas: 1
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_AUTH_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_AUTH_PASS}
+      - MONGO_INITDB_DATABASE=auth_db
+    volumes:
+      - mongo_auth_data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - cafe-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/auth_db --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo-order:
+    image: mongo:4.2
+    deploy:
+      replicas: 1
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ORDER_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ORDER_PASS}
+      - MONGO_INITDB_DATABASE=order_db
+    volumes:
+      - mongo_order_data:/data/db
+    ports:
+      - "27018:27017"
+    networks:
+      - cafe-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/order_db --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:6-alpine
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    networks:
+      - cafe-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:20.3
+    deploy:
+      replicas: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infrastructure/init-scripts/clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+    networks:
+      - cafe-network
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_menu_data:
+    driver: rexray/ebs
+    driver_opts:
+      size: 100
+      volumetype: gp2
+  pg_inventory_data:
+    driver: rexray/ebs
+    driver_opts:
+      size: 50
+      volumetype: gp2
+  mongo_auth_data:
+    driver: rexray/ebs
+    driver_opts:
+      size: 20
+      volumetype: gp2
+  mongo_order_data:
+    driver: rexray/ebs
+    driver_opts:
+      size: 50
+      volumetype: gp2
+  redis_data:
+  clickhouse_data:
+    driver: rexray/ebs
+    driver_opts:
+      size: 100
+      volumetype: gp2
+
+secrets:
+  jwt-private-key:
+    external: true
+  jwt-public-key:
+    external: true
+
+networks:
+  cafe-network:
+    driver: overlay
+    attachable: true
